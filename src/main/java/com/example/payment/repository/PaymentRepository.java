@@ -15,8 +15,11 @@ import java.util.Optional;
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
-    // Find payment by Stripe ID
-    Optional<Payment> findByStripePaymentId(String stripePaymentId);
+    // Find payment by Razorpay payment ID
+    Optional<Payment> findByRazorpayPaymentId(String razorpayPaymentId);
+    
+    // Find payment by Razorpay order ID
+    Optional<Payment> findByRazorpayOrderId(String razorpayOrderId);
 
     // Find all payments by customer email with pagination
     Page<Payment> findByCustomerEmailOrderByCreatedAtDesc(String customerEmail, Pageable pageable);

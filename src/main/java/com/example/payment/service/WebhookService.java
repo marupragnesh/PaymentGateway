@@ -48,7 +48,7 @@ public class WebhookService {
         String orderId = paymentEntity.getString("order_id");
         String paymentId = paymentEntity.getString("id");
 
-        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(orderId);
+        Optional<Payment> paymentOpt = paymentRepository.findByRazorpayOrderId(orderId);
         if (paymentOpt.isEmpty()) {
             logger.error("Payment not found for Order ID: {}", orderId);
             return;
@@ -73,7 +73,7 @@ public class WebhookService {
         }
 
         paymentRepository.save(payment);
-        logger.info("Payment authorized: {}", payment.getStripePaymentId());
+        logger.info("Payment authorized: {}", payment.getRazorpayPaymentId());
     }
 
     private void handlePaymentFailed(JSONObject webhookData) {
@@ -83,7 +83,7 @@ public class WebhookService {
         
         String orderId = paymentEntity.getString("order_id");
 
-        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(orderId);
+        Optional<Payment> paymentOpt = paymentRepository.findByRazorpayOrderId(orderId);
         if (paymentOpt.isEmpty()) return;
 
         Payment payment = paymentOpt.get();
@@ -101,42 +101,37 @@ public class WebhookService {
         paymentRepository.save(payment);
     }
 
-    private void handlePaymentRequiresAction(Event event) {
-        PaymentIntent paymentIntent = (PaymentIntent) event.getDataObjectDeserializer()
-                .getObject().orElse(null);
-        if (paymentIntent == null) return;
+    private void handlePaymentCaptured(JSONObject webhookData) {
+        JSONObject paymentEntity = webhookData.getJSONObject("payload")
+                .getJSONObject("payment")
+                .getJSONObject("entity");
+        
+        String orderId = paymentEntity.getString("order_id");
 
-        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(paymentIntent.getId());
+        Optional<Payment> paymentOpt = paymentRepository.findByRazorpayOrderId(orderId);
         if (paymentOpt.isEmpty()) return;
 
         Payment payment = paymentOpt.get();
-        payment.setStatus(PaymentStatus.REQUIRES_ACTION);
+        payment.setStatus(PaymentStatus.SUCCESS);
         paymentRepository.save(payment);
+        logger.info("Payment captured: {}", payment.getRazorpayPaymentId());
     }
 
-    private void handlePaymentProcessing(Event event) {
-        PaymentIntent paymentIntent = (PaymentIntent) event.getDataObjectDeserializer()
-                .getObject().orElse(null);
-        if (paymentIntent == null) return;
+    private void handleRefundProcessed(JSONObject webhookData) {
+        JSONObject refundEntity = webhookData.getJSONObject("payload")
+                .getJSONObject("refund")
+                .getJSONObject("entity");
+        
+        String paymentId = refundEntity.getString("payment_id");
 
-        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(paymentIntent.getId());
+        Optional<Payment> paymentOpt = paymentRepository.findByRazorpayPaymentId(paymentId);
         if (paymentOpt.isEmpty()) return;
 
         Payment payment = paymentOpt.get();
-        payment.setStatus(PaymentStatus.PROCESSING);
+        payment.setStatus(PaymentStatus.REFUNDED);
         paymentRepository.save(payment);
+        logger.info("Payment refunded: {}", payment.getRazorpayPaymentId());
     }
 
-    private void handlePaymentCanceled(Event event) {
-        PaymentIntent paymentIntent = (PaymentIntent) event.getDataObjectDeserializer()
-                .getObject().orElse(null);
-        if (paymentIntent == null) return;
 
-        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(paymentIntent.getId());
-        if (paymentOpt.isEmpty()) return;
-
-        Payment payment = paymentOpt.get();
-        payment.setStatus(PaymentStatus.CANCELLED);
-        paymentRepository.save(payment);
-    }
 }

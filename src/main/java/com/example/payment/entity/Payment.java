@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "payments", indexes = {
-        @Index(name = "idx_stripe_payment_id", columnList = "stripePaymentId"),
+        @Index(name = "idx_razorpay_payment_id", columnList = "razorpayPaymentId"),
+        @Index(name = "idx_razorpay_order_id", columnList = "razorpayOrderId"),
         @Index(name = "idx_customer_email", columnList = "customerEmail"),
         @Index(name = "idx_status", columnList = "status"),
         @Index(name = "idx_created_at", columnList = "createdAt")
@@ -20,7 +21,10 @@ public class Payment {
     private Long id;
 
     @Column(nullable = false, unique = true, length = 100)
-    private String stripePaymentId;
+    private String razorpayPaymentId;
+    
+    @Column(unique = true, length = 100)
+    private String razorpayOrderId;
 
     @Column(nullable = false, precision = 10, scale = 2)
     @DecimalMin(value = "0.50", message = "Minimum amount is $0.50")
@@ -76,9 +80,10 @@ public class Payment {
     public Payment() {}
 
     // Constructor for creating new payment
-    public Payment(String stripePaymentId, Double amount, String currency,
+    public Payment(String razorpayPaymentId, String razorpayOrderId, Double amount, String currency,
                    PaymentStatus status, String customerEmail, String description) {
-        this.stripePaymentId = stripePaymentId;
+        this.razorpayPaymentId = razorpayPaymentId;
+        this.razorpayOrderId = razorpayOrderId;
         this.amount = amount;
         this.currency = currency;
         this.status = status;
@@ -90,8 +95,11 @@ public class Payment {
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
-    public String getStripePaymentId() { return stripePaymentId; }
-    public void setStripePaymentId(String stripePaymentId) { this.stripePaymentId = stripePaymentId; }
+    public String getRazorpayPaymentId() { return razorpayPaymentId; }
+    public void setRazorpayPaymentId(String razorpayPaymentId) { this.razorpayPaymentId = razorpayPaymentId; }
+    
+    public String getRazorpayOrderId() { return razorpayOrderId; }
+    public void setRazorpayOrderId(String razorpayOrderId) { this.razorpayOrderId = razorpayOrderId; }
 
     public Double getAmount() { return amount; }
     public void setAmount(Double amount) { this.amount = amount; }

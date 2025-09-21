@@ -136,7 +136,7 @@ public class EmailService {
             """,
                 currencyFormat.format(payment.getAmount()),
                 payment.getDescription(),
-                payment.getStripePaymentId(),
+                payment.getRazorpayPaymentId(),
                 payment.getCreatedAt().format(dateFormat),
                 payment.getCardBrand() != null ? payment.getCardBrand().toUpperCase() : "Card",
                 payment.getCardLast4() != null ? payment.getCardLast4() : "****",

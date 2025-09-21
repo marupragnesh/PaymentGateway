@@ -5,7 +5,7 @@ import jakarta.validation.constraints.*;
 public class RefundRequest {
 
     @NotBlank(message = "Payment Intent ID is required")
-    private String paymentIntentId;
+    private String razorpayPaymentId;
 
     @NotNull(message = "Refund amount is required")
     @DecimalMin(value = "0.01", message = "Minimum refund amount is $0.01")
@@ -17,15 +17,15 @@ public class RefundRequest {
     // Constructors
     public RefundRequest() {}
 
-    public RefundRequest(String paymentIntentId, Double refundAmount, String reason) {
-        this.paymentIntentId = paymentIntentId;
+    public RefundRequest(String razorpayPaymentId, Double refundAmount, String reason) {
+        this.razorpayPaymentId = razorpayPaymentId;
         this.refundAmount = refundAmount;
         this.reason = reason;
     }
 
     // Getters and Setters
-    public String getPaymentIntentId() { return paymentIntentId; }
-    public void setPaymentIntentId(String paymentIntentId) { this.paymentIntentId = paymentIntentId; }
+    public String getRazorpayPaymentId() { return razorpayPaymentId; }
+    public void setRazorpayPaymentId(String razorpayPaymentId) { this.razorpayPaymentId = razorpayPaymentId; }
 
     public Double getRefundAmount() { return refundAmount; }
     public void setRefundAmount(Double refundAmount) { this.refundAmount = refundAmount; }

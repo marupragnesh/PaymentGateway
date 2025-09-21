@@ -3,8 +3,10 @@ package com.example.payment.service;
 import com.example.payment.dto.PaymentRequest;
 import com.example.payment.dto.PaymentResponse;
 import com.example.payment.dto.PaymentStats;
+import com.example.payment.dto.RefundRequest;
 import com.example.payment.entity.Payment;
 import com.example.payment.entity.PaymentStatus;
+import com.example.payment.exception.PaymentException;
 import com.example.payment.repository.PaymentRepository;
 import com.razorpay.Order;
 import com.razorpay.RazorpayClient;
@@ -19,7 +21,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -44,7 +48,7 @@ public class PaymentService {
     private String razorpayCurrency;
 
     // Create payment order with enhanced error handling
-    public PaymentResponse createPaymentIntent(PaymentRequest request) {
+    public PaymentResponse createPaymentOrder(PaymentRequest request) {
         logger.info("Creating payment order for amount: {} {}", request.getAmount(), request.getCurrency());
 
         try {
@@ -81,12 +85,14 @@ public class PaymentService {
 
             // Create payment record in database
             Payment payment = new Payment(
-                    order.get("id"),
-                    request.getAmount(),
-                    razorpayCurrency,
-                    PaymentStatus.PENDING,
-                    request.getCustomerEmail(),
-                    request.getDescription());
+                order.get("id"),
+                order.get("id"),
+                request.getAmount(),
+                razorpayCurrency,
+                PaymentStatus.PENDING,
+                request.getCustomerEmail(),
+                request.getDescription()
+            );
 
             // Set payment method type
             payment.setPaymentMethodType("razorpay");
@@ -120,19 +126,18 @@ public class PaymentService {
         }
     }
 
-    // Handle payment intent status and send appropriate emails
-    private PaymentResponse handlePaymentIntentStatus(PaymentIntent paymentIntent, Payment payment) {
-        String status = paymentIntent.getStatus();
-        logger.info("Payment intent status: {} for payment: {}", status, payment.getStripePaymentId());
+    // Handle payment status and send appropriate emails
+    private PaymentResponse handlePaymentStatus(String status, Payment payment) {
+        logger.info("Payment status: {} for payment: {}", status, payment.getRazorpayPaymentId());
 
         switch (status) {
             case "requires_action", "requires_source_action" -> {
-                // Payment requires additional authentication (3D Secure)
+                // Payment requires additional authentication
                 payment.setStatus(PaymentStatus.REQUIRES_ACTION);
                 paymentRepository.save(payment);
 
                 return new PaymentResponse(false, "requires_action",
-                        paymentIntent.getId(), paymentIntent.getClientSecret());
+                        payment.getRazorpayPaymentId(), null);
             }
             case "succeeded" -> {
                 // Payment succeeded
@@ -144,51 +149,49 @@ public class PaymentService {
                 emailService.sendPaymentSuccessEmail(payment);
 
                 return new PaymentResponse(true, "Payment successful!",
-                        paymentIntent.getId(), null);
+                        payment.getRazorpayPaymentId(), null);
             }
             case "processing" -> {
-                // Payment is processing (for bank transfers, etc.)
+                // Payment is processing
                 payment.setStatus(PaymentStatus.PROCESSING);
                 paymentRepository.save(payment);
 
                 return new PaymentResponse(true, "Payment is being processed",
-                        paymentIntent.getId(), null);
+                        payment.getRazorpayPaymentId(), null);
             }
-            default -> {
+            case "failed" -> {
                 // Payment failed
                 payment.setStatus(PaymentStatus.FAILED);
-                payment.setFailureReason(getFailureReason(paymentIntent));
+                payment.setFailureReason("Payment was declined. Please try a different payment method.");
                 payment.setEmailSent(true);
                 paymentRepository.save(payment);
 
                 // Send failure email asynchronously
                 emailService.sendPaymentFailureEmail(payment);
 
-                return new PaymentResponse(false, "Payment failed: " + getFailureReason(paymentIntent));
+                return new PaymentResponse(false, "Payment failed: Payment was declined");
+            }
+            default -> {
+                // Handle other statuses
+                payment.setStatus(PaymentStatus.FAILED);
+                payment.setFailureReason("Unknown payment status: " + status);
+                paymentRepository.save(payment);
+
+                return new PaymentResponse(false, "Payment failed: Unknown status");
             }
         }
     }
 
-    // Extract failure reason from payment intent
-    private String getFailureReason(PaymentIntent paymentIntent) {
-        if (paymentIntent.getLastPaymentError() != null) {
-            return paymentIntent.getLastPaymentError().getMessage();
-        }
-        return "Payment was declined by your bank. Please try a different payment method.";
-    }
-
     // Confirm payment that requires additional action
-    public PaymentResponse confirmPayment(String paymentIntentId) {
-        logger.info("Confirming payment intent: {}", paymentIntentId);
+    public PaymentResponse confirmPayment(String razorpayPaymentId) {
+        logger.info("Confirming payment: {}", razorpayPaymentId);
 
         try {
-            Stripe.apiKey = stripeSecretKey;
-
-            // Retrieve payment intent from Stripe
-            PaymentIntent paymentIntent = PaymentIntent.retrieve(paymentIntentId);
+            // Initialize Razorpay client
+            RazorpayClient razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
 
             // Find payment in our database
-            Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(paymentIntentId);
+            Optional<Payment> paymentOpt = paymentRepository.findByRazorpayPaymentId(razorpayPaymentId);
             if (paymentOpt.isEmpty()) {
                 return new PaymentResponse(false, "Payment record not found");
             }
@@ -196,10 +199,10 @@ public class PaymentService {
             Payment payment = paymentOpt.get();
 
             // Handle the confirmed payment status
-            return handlePaymentIntentStatus(paymentIntent, payment);
+            return handlePaymentStatus("succeeded", payment);
 
-        } catch (StripeException e) {
-            logger.error("Stripe error confirming payment: {}", e.getMessage(), e);
+        } catch (RazorpayException e) {
+            logger.error("Razorpay error confirming payment: {}", e.getMessage(), e);
             return new PaymentResponse(false, "Error confirming payment: " + e.getLocalizedMessage());
         } catch (Exception e) {
             logger.error("Unexpected error confirming payment: {}", e.getMessage(), e);
@@ -207,15 +210,34 @@ public class PaymentService {
         }
     }
 
+    // Process refund from request object
+    public Map<String, Object> refundPayment(RefundRequest request) {
+        logger.info("Processing refund for payment: {}, amount: {}", 
+                request.getRazorpayPaymentId(), request.getRefundAmount());
+        
+        PaymentResponse response = processRefund(
+                request.getRazorpayPaymentId(), 
+                request.getRefundAmount());
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", response.isSuccess());
+        result.put("message", response.getMessage());
+        result.put("paymentId", request.getRazorpayPaymentId());
+        result.put("refundAmount", request.getRefundAmount());
+        
+        return result;
+    }
+    
     // Process refund
-    public PaymentResponse processRefund(String paymentIntentId, Double refundAmount) {
-        logger.info("Processing refund for payment: {}, amount: {}", paymentIntentId, refundAmount);
+    public PaymentResponse processRefund(String razorpayPaymentId, Double refundAmount) {
+        logger.info("Processing refund for payment: {}, amount: {}", razorpayPaymentId, refundAmount);
 
         try {
-            Stripe.apiKey = stripeSecretKey;
+            // Initialize Razorpay client with API keys
+            RazorpayClient razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
 
             // Find payment in database
-            Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentId(paymentIntentId);
+            Optional<Payment> paymentOpt = paymentRepository.findByRazorpayPaymentId(razorpayPaymentId);
             if (paymentOpt.isEmpty()) {
                 return new PaymentResponse(false, "Payment not found");
             }
@@ -236,13 +258,14 @@ public class PaymentService {
                 return new PaymentResponse(false, "Refund amount exceeds available amount");
             }
 
-            // Create refund with Stripe
-            com.stripe.model.Refund refund = com.stripe.model.Refund.create(
-                    com.stripe.param.RefundCreateParams.builder()
-                            .setPaymentIntent(paymentIntentId)
-                            .setAmount((long) (refundAmount * 100))
-                            .setReason(com.stripe.param.RefundCreateParams.Reason.REQUESTED_BY_CUSTOMER)
-                            .build());
+            // Create refund with Razorpay
+            JSONObject refundRequest = new JSONObject();
+            refundRequest.put("payment_id", razorpayPaymentId);
+            refundRequest.put("amount", (int) (refundAmount * 100));
+            refundRequest.put("notes", new JSONObject().put("reason", "REQUESTED_BY_CUSTOMER"));
+            
+            // Create refund using Razorpay API
+            com.razorpay.Refund refund = razorpayClient.payments.refund(razorpayPaymentId, refundRequest);
 
             // Update payment record
             payment.setRefundedAmount(payment.getRefundedAmount() + refundAmount);
@@ -258,8 +281,8 @@ public class PaymentService {
             logger.info("Refund processed successfully: {}", refund.getId());
             return new PaymentResponse(true, "Refund processed successfully");
 
-        } catch (StripeException e) {
-            logger.error("Stripe error processing refund: {}", e.getMessage(), e);
+        } catch (RazorpayException e) {
+            logger.error("Razorpay error processing refund: {}", e.getMessage(), e);
             return new PaymentResponse(false, "Error processing refund: " + e.getLocalizedMessage());
         } catch (Exception e) {
             logger.error("Unexpected error processing refund: {}", e.getMessage(), e);
@@ -267,9 +290,21 @@ public class PaymentService {
         }
     }
 
+    // Get payment by ID
+    public Payment getPaymentById(String paymentId) throws PaymentException {
+        logger.info("Fetching payment details for ID: {}", paymentId);
+        Optional<Payment> paymentOpt = paymentRepository.findByRazorpayPaymentId(paymentId);
+        return paymentOpt.orElseThrow(() -> new PaymentException("Payment not found"));
+    }
+
     // Get payments by customer with pagination
     public Page<Payment> getPaymentsByCustomer(String customerEmail, Pageable pageable) {
         return paymentRepository.findByCustomerEmailOrderByCreatedAtDesc(customerEmail, pageable);
+    }
+    
+    // Alias method for PaymentController compatibility
+    public Page<Payment> getPaymentsByCustomerEmail(String customerEmail, Pageable pageable) {
+        return getPaymentsByCustomer(customerEmail, pageable);
     }
 
     // Get all payments with pagination
@@ -291,6 +326,11 @@ public class PaymentService {
                 successAmount != null ? successAmount : 0.0,
                 failedCount != null ? failedCount : 0L,
                 paymentRepository.count());
+    }
+    
+    // Alias method for PaymentController compatibility
+    public PaymentStats getPaymentStats() {
+        return getPaymentStatistics();
     }
 
     // Send pending emails (for failed email deliveries)

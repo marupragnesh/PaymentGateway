@@ -36,7 +36,7 @@ public class PaymentController {
     @PostMapping("/create")
     public ResponseEntity<PaymentResponse> createPayment(@Valid @RequestBody PaymentRequest request) throws PaymentException {
         logger.info("Creating Razorpay payment for customer: {}", request.getCustomerEmail());
-        PaymentResponse response = paymentService.createPaymentIntent(request);
+        PaymentResponse response = paymentService.createPaymentOrder(request);
         return ResponseEntity.ok(response);
     }
 
@@ -57,7 +57,7 @@ public class PaymentController {
 
     @PostMapping("/refund")
     public ResponseEntity<Map<String, Object>> refundPayment(@Valid @RequestBody RefundRequest request) throws PaymentException {
-        logger.info("Processing refund for Razorpay payment: {}", request.getPaymentIntentId());
+        logger.info("Processing refund for Razorpay payment: {}", request.getRazorpayPaymentId());
         Map<String, Object> response = paymentService.refundPayment(request);
         return ResponseEntity.ok(response);
     }
